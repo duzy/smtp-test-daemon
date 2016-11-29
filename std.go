@@ -423,6 +423,24 @@ const (
 	TLSERROR        // error during TLS setup. Connection is dead.
 )
 
+var eventNames = []string{
+	"",
+	"COMMAND",
+	"AUTHRESP",
+	"AUTHABORT",
+	"GOTDATA",
+	"DONE",
+	"ABORT",
+	"TLSERROR",
+}
+
+func (ev Event) String() string {
+        if n := int(ev); 0 <= n && n < len(eventNames) {
+                return eventNames[n]
+        }
+        return "?"
+}
+
 // EventInfo is what Conn.Next() returns to represent events.
 // Cmd and Arg come from ParsedLine.
 type EventInfo struct {
