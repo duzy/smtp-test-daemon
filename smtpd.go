@@ -1,9 +1,9 @@
 //
-// Package smtpd handles the low level of the server side of the SMTP
+// Package std handles the low level of the server side of the SMTP
 // protocol. It does not handle high level details like what addresses
 // should be accepted or what should happen with email once it has
 // been fully received; those decisions are instead delegated to
-// whatever is driving smtpd.  Smtpd's purpose is simply to handle the
+// whatever is driving std.  Std's purpose is simply to handle the
 // grunt work of a reasonably RFC compliant SMTP server, taking care
 // of things like proper command sequencing, TLS, and basic
 // correctness of some things.
@@ -20,7 +20,7 @@
 // than the RFC requires so it shouldn't matter). See DefaultLimits
 // and SetLimits().
 //
-package smtpd
+package std
 
 // See http://en.wikipedia.org/wiki/Extended_SMTP#Extensions
 
@@ -358,7 +358,7 @@ type AuthConfig struct {
 }
 
 // Config represents the configuration for a Conn. If unset, Limits is
-// DefaultLimits, LocalName is 'localhost', and SftName is 'go-smtpd'.
+// DefaultLimits, LocalName is 'localhost', and SftName is 'go-std'.
 type Config struct {
 	TLSConfig *tls.Config   // TLS configuration if TLS is to be enabled
 	Limits    *Limits       // The limits applied to the connection
@@ -1208,7 +1208,7 @@ func NewConn(conn net.Conn, cfg Config, log io.Writer) *Conn {
 		c.Config.Limits = &DefaultLimits
 	}
 	if c.Config.SftName == "" {
-		c.Config.SftName = "go-smtpd"
+		c.Config.SftName = "go-std"
 	}
 	if c.Config.LocalName == "" {
 		c.Config.LocalName = "localhost"

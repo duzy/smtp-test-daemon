@@ -1,7 +1,7 @@
 //
 // Let's see if I can write Go tests
 
-package smtpd
+package std
 
 import (
 	"bufio"
@@ -238,7 +238,7 @@ RCPT TO:<e@f.com>
 HELO
 QUIT
 `
-var basicServer = `220 localhost go-smtpd
+var basicServer = `220 localhost go-std
 250-localhost Hello 127.10.10.100:56789
 250-8BITMIME
 250-PIPELINING
@@ -281,7 +281,7 @@ RCPT TO:<>
 RCPT TO:<abc@def>
 RCPT TO:<abc@ghi> SIZE=9999
 `
-var sequenceServer = `220 localhost go-smtpd
+var sequenceServer = `220 localhost go-std
 503 Out of sequence command
 250 Okay
 503 Out of sequence command
@@ -365,7 +365,7 @@ AUTH TEST initial-auth-resp
 MAIL FROM:<a@b.com>
 QUIT
 `
-var authServer1 = `220 localhost go-smtpd
+var authServer1 = `220 localhost go-std
 250-localhost Hello 127.10.10.100:56789
 250-8BITMIME
 250-PIPELINING
@@ -426,7 +426,7 @@ AUTH TEST
 AUTH TEST
 QUIT
 `
-var authServer2 = `220 localhost go-smtpd
+var authServer2 = `220 localhost go-std
 250-localhost Hello 127.10.10.100:56789
 250-8BITMIME
 250-PIPELINING
@@ -462,7 +462,7 @@ c3Vic2VxdWVudC1yZXNwb25zZQ==
 ZmluYWwtcmVzcG9uc2U=
 QUIT
 `
-var authServer3 = `220 localhost go-smtpd
+var authServer3 = `220 localhost go-std
 250-localhost Hello 127.10.10.100:56789
 250-8BITMIME
 250-PIPELINING
@@ -536,7 +536,7 @@ AUTH TEST =
 *
 QUIT
 `
-var authServer4 = `220 localhost go-smtpd
+var authServer4 = `220 localhost go-std
 250-localhost Hello 127.10.10.100:56789
 250-8BITMIME
 250-PIPELINING
