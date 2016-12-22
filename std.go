@@ -26,6 +26,7 @@ package std
 
 import (
 	"bufio"
+        "bytes"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -35,6 +36,10 @@ import (
 	"strings"
 	"time"
 	"unicode"
+        "sync"
+        "log"
+        "os"
+        //"errors"
 )
 
 // The time format we log messages in.
@@ -46,8 +51,7 @@ type Command int
 // Recognized SMTP commands. Not all of them do anything
 // (e.g. VRFY and EXPN are just refused).
 const (
-	noCmd  Command = iota // artificial zero value
-	BadCmd Command = iota
+	nocmd  Command = iota // artificial zero value
 	HELO
 	EHLO
 	MAILFROM
@@ -61,6 +65,7 @@ const (
 	HELP
 	AUTH
 	STARTTLS
+	BadCmd
 )
 
 // ParsedLine represents a parsed SMTP command line.  Err is set if
@@ -90,42 +95,33 @@ const (
 
 // Our ideal of what requires an argument is slightly relaxed from the
 // RFCs, ie we will accept argumentless HELO/EHLO.
-var smtpCommand = []struct {
-	cmd     Command
-	text    string
+var commands = []*struct {
+	value   Command
+	name    string
 	argtype cmdArgs
 }{
-	{HELO, "HELO", canArg},
-	{EHLO, "EHLO", canArg},
-	{MAILFROM, "MAIL FROM", colonAddress},
-	{RCPTTO, "RCPT TO", colonAddress},
-	{DATA, "DATA", noArg},
-	{QUIT, "QUIT", noArg},
-	{RSET, "RSET", noArg},
-	{NOOP, "NOOP", noArg},
-	{VRFY, "VRFY", mustArg},
-	{EXPN, "EXPN", mustArg},
-	{HELP, "HELP", canArg},
-	{STARTTLS, "STARTTLS", noArg},
-	{AUTH, "AUTH", oneOrTwoArgs},
-	// TODO: do I need any additional SMTP commands?
+	{nocmd,         "",             noArg},
+	{HELO,          "HELO",         canArg},
+	{EHLO,          "EHLO",         canArg},
+	{MAILFROM,      "MAIL FROM",    colonAddress},
+	{RCPTTO,        "RCPT TO",      colonAddress},
+	{DATA,          "DATA",         noArg},
+	{QUIT,          "QUIT",         noArg},
+	{RSET,          "RSET",         noArg},
+	{NOOP,          "NOOP",         noArg},
+	{VRFY,          "VRFY",         mustArg},
+	{EXPN,          "EXPN",         mustArg},
+	{HELP,          "HELP",         canArg},
+	{AUTH,          "AUTH",         oneOrTwoArgs},
+	{STARTTLS,      "STARTTLS",     noArg},
 }
 
 func (v Command) String() string {
-	switch v {
-	case noCmd:
-		return "<zero Command value>"
-	case BadCmd:
-		return "<bad SMTP command>"
-	default:
-		for _, c := range smtpCommand {
-			if c.cmd == v {
-				return fmt.Sprintf("<SMTP '%s'>", c.text)
-			}
-		}
-		// ... because someday I may screw this one up.
-		return fmt.Sprintf("<Command cmd val %d>", v)
-	}
+        if i := int(v); 0 <= i && i < int(BadCmd) {
+                return fmt.Sprintf("<%s>", commands[i].name)
+        } else {
+                return fmt.Sprintf("<BadCommand:%d>", i)
+        }
 }
 
 // Returns True if the argument is all 7-bit ASCII. This is what all SMTP
@@ -163,15 +159,15 @@ func ParseCmd(line string) ParsedLine {
 	// it's not found, this is definitely not a good command.
 	// We search on an upper-case version of the line to make my life
 	// much easier.
-	found := -1
+        cmd := commands[0]
 	upper := strings.ToUpper(line)
-	for i := range smtpCommand {
-		if strings.HasPrefix(upper, smtpCommand[i].text) {
-			found = i
+	for _, c := range commands {
+		if 0 < len(c.name) && strings.HasPrefix(upper, c.name) {
+                        cmd = c
 			break
 		}
 	}
-	if found == -1 {
+        if cmd == nil || cmd.value == nocmd {
 		res.Err = "unrecognized command"
 		return res
 	}
@@ -179,9 +175,8 @@ func ParseCmd(line string) ParsedLine {
 	// Validate that we've ended at a word boundary, either a space or
 	// ':'. If we don't, this is not a valid match. Note that we now
 	// work with the original-case line, not the upper-case version.
-	cmd := smtpCommand[found]
 	llen := len(line)
-	clen := len(cmd.text)
+	clen := len(cmd.name)
 	if !(llen == clen || line[clen] == ' ' || line[clen] == ':') {
 		res.Err = "unrecognized command"
 		return res
@@ -191,7 +186,7 @@ func ParseCmd(line string) ParsedLine {
 	// extraction and validation. At this point any remaining errors
 	// are command argument errors, so we set the command type in our
 	// result.
-	res.Cmd = cmd.cmd
+	res.Cmd = cmd.value
 	switch cmd.argtype {
 	case noArg:
 		if llen != clen {
@@ -824,7 +819,7 @@ func (c *Conn) Next() EventInfo {
 		c.nextEvent = nil
 		return evt
 	}
-	if !c.replied && c.curcmd != noCmd {
+	if !c.replied && c.curcmd != nocmd {
 		if c.state == sAuth {
 			// send empty challenge instead of auto accept
 			// to prevent accidental auth success.
@@ -1232,4 +1227,123 @@ func NewConn(conn net.Conn, cfg Config, log io.Writer) *Conn {
 		c.Config.LocalName = "localhost"
 	}
 	return c
+}
+
+var ServeAcceptors = 3
+
+// MailStorer represents a storage for (test) mail server.
+type MailStorer interface {
+        Store(from, to, content string)
+}
+
+// MailServer represents a mail server specifically for test purposes.
+type MailServer struct {
+        config Config
+        storer MailStorer
+        logger *log.Logger
+}
+
+// NewMailServer create a new mail server.
+func NewMailServer() *MailServer {
+        logger := log.New(os.Stderr, "", log.LstdFlags)
+        return &MailServer{
+                storer: &trivialStorer{ logger },
+                logger: logger, 
+        }
+}
+
+// SetLogOutput sets the output destination for the logger.
+func (d *MailServer) SetLogOutput(w io.Writer) {
+        d.logger.SetOutput(w)
+}
+
+// Logf logs a record to the logger.
+func (d *MailServer) Logf(format string, v ...interface{}) {
+	d.logger.Printf(format, v...)
+}
+
+// 
+func (d *MailServer) SetStorer(s MailStorer) {
+        d.storer = s
+}
+
+// Serve runs a test server dumping all client conversations to the 'dump'
+// writer.
+func (d *MailServer) Serve(addr string) error {
+        l, err := net.Listen("tcp", addr)
+        if err != nil {
+                return err
+        }
+
+        defer l.Close()
+
+        n := ServeAcceptors
+        if n <= 0 {
+                n = 1
+        }
+
+        w := new(sync.WaitGroup)
+        w.Add(n)
+
+        for i := 0; i < n; i++ {
+                go d.serve(l, w)
+        }
+
+        w.Wait()
+        return nil
+}
+
+func (d *MailServer) serve(l net.Listener, w *sync.WaitGroup) {
+        for {
+                c, err := l.Accept()
+                if err != nil {
+                        d.logger.Printf("accept: %v", err)
+                } else {
+                        go d.parsing(c)
+                }
+        }
+        w.Done()
+}
+
+func (d *MailServer) parsing(c net.Conn) {
+        var (
+                mem = new(bytes.Buffer)
+                conn = NewConn(c, d.config, bufio.NewWriter(mem))
+                hn, from, dest string
+        )
+parse_loop:
+        for {
+                switch evt := conn.Next(); evt.What {
+                case COMMAND:
+                        switch evt.Cmd {
+                        case EHLO: hn = evt.Arg
+                        case MAILFROM: from = evt.Arg
+                        case RCPTTO: dest = evt.Arg
+                        case DATA:
+                        default:
+                                d.logger.Printf("%v: %v %v", evt.What, evt.Cmd, evt.Arg)
+                        }
+                case GOTDATA:
+                        if hn != "" {
+                                d.storer.Store(from, dest, evt.Arg)
+                        }
+                case DONE:
+                        d.logger.Printf("%v", evt.What)
+                        break parse_loop
+                case ABORT:
+                        d.logger.Printf("%v", evt.What)
+                        break parse_loop
+                default:
+                        d.logger.Printf("%v: %v %v", evt.What, evt.Cmd, evt.Arg)
+                }
+                conn.Accept()
+        }
+}
+
+type trivialStorer struct {
+        logger *log.Logger
+}
+
+func (ts *trivialStorer) Store(from, to, content string) {
+        ts.logger.Printf("Discard %d bytes (%s -> %s)", len(content), from, to)
 }
